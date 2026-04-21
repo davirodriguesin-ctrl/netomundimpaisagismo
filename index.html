@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Neto Mundim · Paisagismo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fraunces:ital,wght@1,300;1,400&display=swap" rel="stylesheet">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     META TRACKING LAYER — Pixel + CAPI com dedup, consent LGPD
+     Ver README.md e /api/track.js para o lado servidor.
+     ═══════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  // ——— CONFIG ———
+  // Pixel ID público (pode ficar no frontend). Access Token é SÓ no servidor.
+  window.META_CONFIG = {
+    PIXEL_ID: '{{INSIRA_SEU_PIXEL_ID}}',   // ← troque em produção
+    TRACK_ENDPOINT: '/api/track',           // serverless function (Vercel/Netlify)
+    CONSENT_KEY: 'nm_consent_v1',
+    EXTERNAL_ID_KEY: 'nm_eid_v1',
+    SESSION_DEDUP_KEY: 'nm_session_events_v1',
+    COOKIE_DAYS: 90,
+  };
+
+  // ——— Cookie helpers ———
+  function getCookie(name) {
+    const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()[\]\\/+^]/g, '\\$&') + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function setCookie(name, value, days) {
+    const d = new Date(); d.setTime(d.getTime() + days * 864e5);
+    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${d.toUTCString()}; path=/; SameSite=Lax`;
+  }
+
+  // ——— UUID v4 (crypto nativo) ———
+  function uuidv4() {
+    if (crypto && crypto.randomUUID) return crypto.randomUUID();
+    // fallback
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  // ——— fbp / fbc / external_id ———
+  function getFbp() {
+    let fbp = getCookie('_fbp');
+    if (!fbp) {
+      fbp = `fb.1.${Date.now()}.${Math.floor(Math.random() * 1e16)}`;
+      setCookie('_fbp', fbp, window.META_CONFIG.COOKIE_DAYS);
+    }
+    return fbp;
+  }
+  function getFbc() {
+    // 1) cookie existente
+    let fbc = getCookie('_fbc');
+    if (fbc) return fbc;
+    // 2) fbclid na URL → cria fbc
+    const url = new URL(window.location.href);
+    const fbclid = url.searchParams.get('fbclid');
+    if (fbclid) {
+      fbc = `fb.1.${Date.now()}.${fbclid}`;
+      setCookie('_fbc', fbc, window.META_CONFIG.COOKIE_DAYS);
+      return fbc;
+    }
+    return null;
+  }
+  function getExternalId() {
+    let eid = localStorage.getItem(window.META_CONFIG.EXTERNAL_ID_KEY);
+    if (!eid) {
+      eid = uuidv4();
+      try { localStorage.setItem(window.META_CONFIG.EXTERNAL_ID_KEY, eid); } catch (e) {}
+    }
+    return eid;
+  }
+
+  // ——— Consent ———
+  function hasConsent() {
+    try { return localStorage.getItem(window.META_CONFIG.CONSENT_KEY) === 'granted'; } catch (e) { return false; }
+  }
+  function setConsent(granted) {
+    try { localStorage.setItem(window.META_CONFIG.CONSENT_KEY, granted ? 'granted' : 'denied'); } catch (e) {}
+    if (granted) {
+      initPixel();
+      trackEvent('PageView'); // PageView só depois do consent
+    }
+  }
+
+  // ——— Idempotência de sessão (evita duplicar em reload) ———
+  function wasFiredInSession(key) {
+    try {
+      const raw = sessionStorage.getItem(window.META_CONFIG.SESSION_DEDUP_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      return Boolean(obj[key]);
+    } catch (e) { return false; }
+  }
+  function markFiredInSession(key) {
+    try {
+      const raw = sessionStorage.getItem(window.META_CONFIG.SESSION_DEDUP_KEY);
+      const obj = raw ? JSON.parse(raw) : {};
+      obj[key] = Date.now();
+      sessionStorage.setItem(window.META_CONFIG.SESSION_DEDUP_KEY, JSON.stringify(obj));
+    } catch (e) {}
+  }
+
+  // ——— Inicialização do Pixel (só após consent) ———
+  let pixelInitialized = false;
+  function initPixel() {
+    if (pixelInitialized) return;
+    pixelInitialized = true;
+    // Snippet oficial do Meta Pixel
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){
+    n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window,document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', window.META_CONFIG.PIXEL_ID);
+  }
+
+  // ——— trackEvent: Pixel + CAPI com mesmo event_id ———
+  async function trackEvent(eventName, userData = {}, customData = {}) {
+    if (!hasConsent()) return;
+    // Idempotência para eventos "singleton" por sessão
+    const singletonEvents = ['PageView', 'ViewContent', 'QuizComplete'];
+    if (singletonEvents.includes(eventName) && wasFiredInSession(eventName)) return;
+    if (singletonEvents.includes(eventName)) markFiredInSession(eventName);
+
+    const eventId = uuidv4();
+    const eventSourceUrl = window.location.href;
+    const eventTime = Math.floor(Date.now() / 1000);
+
+    // 1) Pixel (client-side)
+    try {
+      if (window.fbq) {
+        window.fbq('track', eventName, customData, { eventID: eventId });
+      }
+    } catch (e) { console.warn('[Meta Pixel] fail:', e); }
+
+    // 2) CAPI (server-side)
+    const fbp = getFbp();
+    const fbc = getFbc();
+    const external_id = getExternalId();
+    const payload = {
+      eventName,
+      eventId,
+      eventTime,
+      eventSourceUrl,
+      userData: {
+        em: userData.em || '',
+        ph: userData.ph || '',
+        fn: userData.fn || '',
+        ln: userData.ln || '',
+        ct: userData.ct || '',
+        st: userData.st || '',
+        zp: userData.zp || '',
+        country: userData.country || '',
+        external_id,
+        fbp,
+        fbc: fbc || '',
+      },
+      customData,
+    };
+
+    // fire-and-forget com retry (feito no servidor tb)
+    sendWithRetry(payload, 0);
+  }
+
+  function sendWithRetry(payload, attempt) {
+    fetch(window.META_CONFIG.TRACK_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).then(r => {
+      if (!r.ok && attempt < 2) {
+        setTimeout(() => sendWithRetry(payload, attempt + 1), Math.pow(2, attempt) * 1000);
+      }
+    }).catch(() => {
+      if (attempt < 2) setTimeout(() => sendWithRetry(payload, attempt + 1), Math.pow(2, attempt) * 1000);
+    });
+  }
+
+  // ——— Captura fbclid no primeiro pageview (idempotente) ———
+  getFbc(); // cria _fbc cookie se tiver ?fbclid=
+
+  // ——— Expose ———
+  window.MetaTracking = { trackEvent, getFbp, getFbc, getExternalId, hasConsent, setConsent };
+
+  // ——— Consent banner boot ———
+  document.addEventListener('DOMContentLoaded', () => {
+    if (hasConsent()) {
+      initPixel();
+      trackEvent('PageView');
+    } else {
+      const banner = document.getElementById('consent-banner');
+      if (banner) setTimeout(() => banner.classList.add('show'), 800);
+    }
+  });
+})();
+</script>
+<style>
+  /* ——— Reset ——— */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+  input { font: inherit; color: inherit; background: none; border: none; outline: none; width: 100%; }
+
+  /* ——— Tokens ——— */
+  :root {
+    --bg: #0a0a0a;
+    --bg-1: #101010;
+    --bg-2: #161616;
+    --line: rgba(255,255,255,0.08);
+    --line-2: rgba(255,255,255,0.14);
+    --text: #f4f4f2;
+    --text-muted: rgba(244,244,242,0.56);
+    --text-dim: rgba(244,244,242,0.38);
+    --accent: oklch(0.62 0.09 145);      /* forest green, elegant */
+    --accent-deep: oklch(0.48 0.10 148);
+    --accent-soft: oklch(0.62 0.09 145 / 0.12);
+    --accent-glow: oklch(0.62 0.09 145 / 0.22);
+
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --dur: 520ms;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+    min-height: 100svh;
+  }
+
+  /* subtle atmospheric gradient — not AI-slop gradient, just depth */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 0%, oklch(0.62 0.09 145 / 0.06), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 50% 100%, oklch(0.62 0.09 145 / 0.04), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ——— Shell ——— */
+  .app {
+    position: relative;
+    z-index: 1;
+    min-height: 100svh;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ——— Header / progress ——— */
+  .header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding: 20px 24px 18px;
+    background: linear-gradient(to bottom, var(--bg) 70%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .brand-mark {
+    width: 22px;
+    height: 22px;
+    position: relative;
+  }
+  .brand-mark svg { display: block; }
+  .brand-name {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .brand-name em {
+    font-style: normal;
+    color: var(--text-dim);
+    font-weight: 400;
+  }
+  .step-counter {
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+  }
+  .step-counter .current { color: var(--text); }
+
+  .progress {
+    height: 2px;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 640ms var(--ease-out);
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  /* ——— Stage ——— */
+  .stage {
+    flex: 1;
+    position: relative;
+    padding: 24px 24px 32px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .step {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .step.leaving {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: '';
+    width: 18px;
+    height: 1px;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  .question {
+    font-family: 'Inter', sans-serif;
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+    color: var(--text);
+    text-wrap: pretty;
+    margin-bottom: 8px;
+  }
+  .question .accent-word {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 300;
+    color: var(--accent);
+  }
+  .hint {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    margin-bottom: 28px;
+    max-width: 34ch;
+  }
+
+  /* ——— Inputs ——— */
+  .text-field {
+    position: relative;
+    border-bottom: 1px solid var(--line-2);
+    padding: 14px 0 12px;
+    transition: border-color 240ms var(--ease);
+  }
+  .text-field:focus-within {
+    border-color: var(--accent);
+  }
+  .text-field input {
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    padding-right: 28px;
+  }
+  .text-field input::placeholder { color: var(--text-dim); }
+  .text-field .caret {
+    position: absolute;
+    right: 2px;
+    bottom: 18px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 180ms var(--ease);
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+  .text-field:focus-within .caret { opacity: 1; }
+
+  /* ——— Option buttons ——— */
+  .options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .options.grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .option {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 20px;
+    background: var(--bg-1);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    text-align: left;
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--text);
+    letter-spacing: -0.005em;
+    transition: background 200ms var(--ease), border-color 200ms var(--ease), transform 200ms var(--ease);
+    min-height: 58px;
+  }
+  .option:hover {
+    background: var(--bg-2);
+    border-color: var(--line-2);
+  }
+  .option:active { transform: scale(0.985); }
+  .option .key {
+    font-size: 10px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 5px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  .option.selected {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .option.selected .key {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .options.grid-2 .option {
+    padding: 22px 18px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    min-height: 96px;
+  }
+  .options.grid-2 .option .label {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+  .options.grid-2 .option .sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-top: 4px;
+  }
+
+  /* ——— Footer nav ——— */
+  .footer {
+    padding: 20px 24px calc(24px + env(safe-area-inset-bottom));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    background: linear-gradient(to top, var(--bg) 60%, transparent);
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+  }
+  .btn-back {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 4px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    transition: color 180ms var(--ease);
+    opacity: 1;
+  }
+  .btn-back:hover { color: var(--text); }
+  .btn-back.hidden { opacity: 0; pointer-events: none; }
+  .btn-back svg { transition: transform 200ms var(--ease); }
+  .btn-back:hover svg { transform: translateX(-3px); }
+
+  .btn-next {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 22px;
+    background: var(--accent);
+    color: #0a0a0a;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    transition: background 200ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease);
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  .btn-next:hover:not(:disabled) {
+    background: oklch(0.68 0.09 145);
+    box-shadow: 0 0 24px var(--accent-glow);
+  }
+  .btn-next:active:not(:disabled) { transform: scale(0.97); }
+  .btn-next:disabled {
+    background: var(--bg-2);
+    color: var(--text-dim);
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .btn-next svg { transition: transform 220ms var(--ease); }
+  .btn-next:hover:not(:disabled) svg { transform: translateX(3px); }
+
+  /* ——— Final screen ——— */
+  .final {
+    text-align: left;
+    padding-top: 8px;
+  }
+  .final-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  .final-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 32px;
+    font-weight: 500;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+    margin-bottom: 14px;
+    text-wrap: balance;
+  }
+  .final-title .accent-word {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 300;
+    color: var(--accent);
+  }
+  .final-sub {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text-muted);
+    margin-bottom: 28px;
+    max-width: 36ch;
+  }
+  .summary {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    margin-bottom: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .summary-row .k {
+    color: var(--text-dim);
+    flex-shrink: 0;
+  }
+  .summary-row .v {
+    color: var(--text);
+    text-align: right;
+    font-weight: 500;
+  }
+  .cta-whatsapp {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 18px 24px;
+    background: var(--accent);
+    color: #0a0a0a;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.005em;
+    transition: background 200ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease);
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  .cta-whatsapp:hover {
+    background: oklch(0.68 0.09 145);
+    box-shadow: 0 0 30px var(--accent-glow);
+  }
+  .cta-whatsapp:active { transform: scale(0.985); }
+  .cta-whatsapp svg { transition: transform 220ms var(--ease); }
+  .cta-whatsapp:hover svg { transform: translateX(4px); }
+
+  /* ——— Intro / hero ——— */
+  .intro {
+    padding: 40px 0 24px;
+  }
+  .intro-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 40px;
+    font-weight: 400;
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    margin-bottom: 18px;
+    text-wrap: balance;
+  }
+  .intro-title .accent-word {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 300;
+    color: var(--accent);
+  }
+  .intro-sub {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--text-muted);
+    margin-bottom: 32px;
+    max-width: 38ch;
+  }
+  .intro-meta {
+    display: flex;
+    gap: 24px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+  .intro-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .intro-meta .k {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 10px;
+  }
+  .intro-meta .v {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+  .cta-start {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    background: var(--accent);
+    color: #0a0a0a;
+    border-radius: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    transition: background 200ms var(--ease), transform 200ms var(--ease), box-shadow 200ms var(--ease);
+  }
+  .cta-start:hover {
+    background: oklch(0.68 0.09 145);
+    box-shadow: 0 0 30px var(--accent-glow);
+  }
+  .cta-start:active { transform: scale(0.985); }
+
+  /* breakpoint: tighten on tiny screens */
+  @media (max-width: 360px) {
+    .question { font-size: 26px; }
+    .intro-title { font-size: 34px; }
+    .stage, .header, .footer { padding-left: 20px; padding-right: 20px; }
+  }
+
+  /* disable tap highlight */
+  button, input, a { -webkit-tap-highlight-color: transparent; }
+
+  /* ——— Consent banner ——— */
+  .consent-banner {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    max-width: 488px;
+    margin: 0 auto;
+    background: var(--bg-1);
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    padding: 18px 20px 16px;
+    z-index: 100;
+    box-shadow: 0 20px 48px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+    transform: translateY(140%);
+    opacity: 0;
+    transition: transform 460ms var(--ease-out), opacity 460ms var(--ease-out);
+  }
+  .consent-banner.show { transform: translateY(0); opacity: 1; }
+  .consent-text {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+  }
+  .consent-text a {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--line-2);
+    text-underline-offset: 3px;
+  }
+  .consent-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .consent-btn {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 180ms var(--ease);
+  }
+  .consent-btn.primary {
+    background: var(--accent);
+    color: #0a0a0a;
+  }
+  .consent-btn.primary:hover { background: oklch(0.68 0.09 145); }
+  .consent-btn.secondary {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--line-2);
+  }
+  .consent-btn.secondary:hover { color: var(--text); border-color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ——— Intro / hero (step 0) ——— -->
+  <div id="intro-view" class="stage" style="padding-top: 32px;">
+    <div class="brand" style="margin-bottom: 48px;">
+      <div class="brand-mark">
+        <svg viewBox="0 0 22 22" width="22" height="22" fill="none">
+          <!-- abstract leaf/forest mark -->
+          <path d="M11 1.5C6 1.5 2.5 5 2.5 10c0 5.5 4 9.5 8.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+          <path d="M11 1.5C16 1.5 19.5 5 19.5 10c0 5.5-4 9.5-8.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+          <path d="M11 20.5V6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+        </svg>
+      </div>
+      <div class="brand-name">Neto Mundim <em>· paisagismo</em></div>
+    </div>
+
+    <div class="intro">
+      <h1 class="intro-title">
+        Vamos desenhar <span class="accent-word">seu jardim</span> em 8 perguntas.
+      </h1>
+      <p class="intro-sub">
+        Uma conversa curta para o Neto entender seu projeto antes de retornar pessoalmente. Leva cerca de 2 minutos.
+      </p>
+      <div class="intro-meta">
+        <div class="intro-meta-item">
+          <span class="k">Etapas</span>
+          <span class="v">08</span>
+        </div>
+        <div class="intro-meta-item">
+          <span class="k">Duração</span>
+          <span class="v">~2 min</span>
+        </div>
+        <div class="intro-meta-item">
+          <span class="k">Retorno</span>
+          <span class="v">Pessoal</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="cta-start" onclick="startQuiz()">
+      Começar
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- ——— Quiz view ——— -->
+  <div id="quiz-view" style="display: none; flex-direction: column; flex: 1;">
+
+    <header class="header">
+      <div class="header-row">
+        <div class="brand">
+          <div class="brand-mark">
+            <svg viewBox="0 0 22 22" width="22" height="22" fill="none">
+              <path d="M11 1.5C6 1.5 2.5 5 2.5 10c0 5.5 4 9.5 8.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+              <path d="M11 1.5C16 1.5 19.5 5 19.5 10c0 5.5-4 9.5-8.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+              <path d="M11 20.5V6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+            </svg>
+          </div>
+          <div class="brand-name">Neto Mundim</div>
+        </div>
+        <div class="step-counter">
+          <span class="current" id="step-current">01</span> / <span id="step-total">08</span>
+        </div>
+      </div>
+      <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+    </header>
+
+    <main class="stage" id="stage">
+      <!-- steps injected -->
+    </main>
+
+    <footer class="footer">
+      <button class="btn-back" id="btn-back" onclick="goBack()">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M13 8H3M7 4L3 8l4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Voltar
+      </button>
+      <button class="btn-next" id="btn-next" onclick="goNext()" disabled>
+        <span id="btn-next-label">Continuar</span>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </footer>
+  </div>
+
+  <!-- ——— Final view ——— -->
+  <div id="final-view" style="display: none; flex-direction: column; flex: 1;">
+    <header class="header">
+      <div class="header-row">
+        <div class="brand">
+          <div class="brand-mark">
+            <svg viewBox="0 0 22 22" width="22" height="22" fill="none">
+              <path d="M11 1.5C6 1.5 2.5 5 2.5 10c0 5.5 4 9.5 8.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+              <path d="M11 1.5C16 1.5 19.5 5 19.5 10c0 5.5-4 9.5-8.5 10.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+              <path d="M11 20.5V6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" style="color: var(--accent);"/>
+            </svg>
+          </div>
+          <div class="brand-name">Neto Mundim</div>
+        </div>
+        <div class="step-counter">
+          <span class="current">08</span> / 08
+        </div>
+      </div>
+      <div class="progress"><div class="progress-bar" style="width: 100%;"></div></div>
+    </header>
+
+    <main class="stage">
+      <div class="final">
+        <div class="final-icon">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <path d="M5 11.5L9 15.5L17 7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent);"/>
+          </svg>
+        </div>
+        <h2 class="final-title" id="final-title">Ótimo, <span id="final-name" class="accent-word">tudo certo</span>.</h2>
+        <p class="final-sub">
+          O Neto vai analisar seu projeto pessoalmente e entrar em contato em breve. Confira o resumo abaixo antes de enviar.
+        </p>
+
+        <div class="summary" id="summary"></div>
+
+        <button class="cta-whatsapp" onclick="sendToWhatsApp()">
+          Enviar para o Neto
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M3 9h12M10 4l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <button class="btn-back" style="margin-top: 20px;" onclick="restartQuiz()">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8a5 5 0 109-3M3 4v4h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Começar novamente
+        </button>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+  // ════════════════════════════════════════════════════════════
+  //  CONFIGURAÇÃO
+  // ════════════════════════════════════════════════════════════
+  const WHATSAPP_NUMBER = '5534984001550'; // ← troque aqui para alterar o número
+
+  // ════════════════════════════════════════════════════════════
+  //  DADOS DAS PERGUNTAS
+  // ════════════════════════════════════════════════════════════
+  const QUESTIONS = [
+    {
+      id: 'nome',
+      eyebrow: 'Apresentação',
+      title: ['Para começar, como podemos te ', { accent: 'chamar' }, '?'],
+      hint: 'Seu primeiro nome já basta.',
+      type: 'text',
+      placeholder: 'Seu nome',
+      summaryLabel: 'Nome',
+    },
+    {
+      id: 'tipo',
+      eyebrow: 'Natureza do projeto',
+      title: ['Seu projeto é ', { accent: 'residencial' }, ' ou ', { accent: 'comercial' }, '?'],
+      type: 'options',
+      layout: 'grid-2',
+      options: [
+        { value: 'Residencial', label: 'Residencial', sub: 'Casa, sítio ou condomínio' },
+        { value: 'Comercial',   label: 'Comercial',   sub: 'Empresa ou empreendimento' },
+      ],
+      summaryLabel: 'Tipo',
+    },
+    {
+      id: 'arquitetonico',
+      eyebrow: 'Projeto arquitetônico',
+      title: ['Você já possui ', { accent: 'projeto arquitetônico' }, '?'],
+      hint: 'Isso nos ajuda a entender o estágio do seu projeto.',
+      type: 'options',
+      options: [
+        { value: 'Sim',          label: 'Sim, já está pronto' },
+        { value: 'Não',          label: 'Não, ainda não' },
+        { value: 'Em andamento', label: 'Está em andamento' },
+      ],
+      summaryLabel: 'Arquitetônico',
+    },
+    {
+      id: 'metragem',
+      eyebrow: 'Área do projeto',
+      title: ['Qual é a ', { accent: 'metragem' }, ' aproximada da área a ser paisagada?'],
+      type: 'options',
+      options: [
+        { value: 'Até 100m²',       label: 'Até 100 m²' },
+        { value: '100 a 300m²',     label: '100 a 300 m²' },
+        { value: '300 a 1000m²',    label: '300 a 1.000 m²' },
+        { value: 'Acima de 1000m²', label: 'Acima de 1.000 m²' },
+      ],
+      summaryLabel: 'Metragem',
+    },
+    {
+      id: 'estilo',
+      eyebrow: 'Estética',
+      title: ['Como você descreveria o ', { accent: 'estilo' }, ' que busca?'],
+      type: 'options',
+      layout: 'grid-2',
+      options: [
+        { value: 'Natural e orgânico',      label: 'Natural',       sub: 'Orgânico, integrado' },
+        { value: 'Moderno e minimalista',   label: 'Moderno',       sub: 'Minimalista, limpo' },
+        { value: 'Tropical exuberante',     label: 'Tropical',      sub: 'Exuberante, volumoso' },
+        { value: 'Ainda não sei',           label: 'Ainda não sei', sub: 'Abertos a conversar' },
+      ],
+      summaryLabel: 'Estilo',
+    },
+    {
+      id: 'investimento',
+      eyebrow: 'Orçamento',
+      title: ['Você já tem um ', { accent: 'investimento' }, ' em mente?'],
+      hint: 'Apenas para dimensionar o escopo — nada é fechado aqui.',
+      type: 'options',
+      options: [
+        { value: 'Até R$10k',       label: 'Até R$ 10 mil' },
+        { value: 'R$10k a R$30k',   label: 'R$ 10 mil a R$ 30 mil' },
+        { value: 'R$30k a R$80k',   label: 'R$ 30 mil a R$ 80 mil' },
+        { value: 'Acima de R$80k',  label: 'Acima de R$ 80 mil' },
+        { value: 'Ainda não sei',   label: 'Ainda não sei' },
+      ],
+      summaryLabel: 'Investimento',
+    },
+    {
+      id: 'prazo',
+      eyebrow: 'Cronograma',
+      title: ['Qual é o ', { accent: 'prazo' }, ' desejado para início do projeto?'],
+      type: 'options',
+      options: [
+        { value: 'Imediato',       label: 'Imediato' },
+        { value: '1 a 3 meses',    label: 'Em 1 a 3 meses' },
+        { value: '3 a 6 meses',    label: 'Em 3 a 6 meses' },
+        { value: 'Mais de 6 meses',label: 'Mais de 6 meses' },
+      ],
+      summaryLabel: 'Prazo',
+    },
+    {
+      id: 'cidade',
+      eyebrow: 'Localização',
+      title: ['Em qual ', { accent: 'cidade' }, ' o projeto será executado?'],
+      hint: 'Cidade e estado.',
+      type: 'text',
+      placeholder: 'Ex: Uberlândia, MG',
+      summaryLabel: 'Cidade',
+    },
+    {
+      id: 'email',
+      eyebrow: 'Contato',
+      title: ['Qual o seu ', { accent: 'e-mail' }, '?'],
+      hint: 'Para o Neto entrar em contato caso o WhatsApp falhe.',
+      type: 'text',
+      inputType: 'email',
+      placeholder: 'voce@exemplo.com',
+      autocapitalize: 'none',
+      summaryLabel: 'E-mail',
+      validate: (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()),
+    },
+    {
+      id: 'telefone',
+      eyebrow: 'Contato',
+      title: ['Qual o seu ', { accent: 'WhatsApp' }, '?'],
+      hint: 'DDD + número. Ex: (34) 99999-9999.',
+      type: 'text',
+      inputType: 'tel',
+      placeholder: '(00) 00000-0000',
+      autocapitalize: 'none',
+      summaryLabel: 'WhatsApp',
+      validate: (v) => v.replace(/\D/g, '').length >= 10,
+    },
+  ];
+
+  // ════════════════════════════════════════════════════════════
+  //  ESTADO
+  // ════════════════════════════════════════════════════════════
+  const state = {
+    idx: 0,
+    answers: {},
+  };
+
+  const stage = document.getElementById('stage');
+  const progressBar = document.getElementById('progress-bar');
+  const stepCurrent = document.getElementById('step-current');
+  const stepTotal = document.getElementById('step-total');
+  const btnBack = document.getElementById('btn-back');
+  const btnNext = document.getElementById('btn-next');
+  const btnNextLabel = document.getElementById('btn-next-label');
+
+  stepTotal.textContent = String(QUESTIONS.length).padStart(2, '0');
+
+  // ════════════════════════════════════════════════════════════
+  //  RENDER
+  // ════════════════════════════════════════════════════════════
+  function renderTitle(parts) {
+    return parts.map(p => {
+      if (typeof p === 'string') return escapeHtml(p);
+      if (p.accent) return `<span class="accent-word">${escapeHtml(p.accent)}</span>`;
+      return '';
+    }).join('');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function renderStep(i) {
+    const q = QUESTIONS[i];
+    const el = document.createElement('div');
+    el.className = 'step';
+    el.dataset.index = i;
+
+    const eyebrow  = `<div class="eyebrow">${escapeHtml(q.eyebrow)}</div>`;
+    const title    = `<h2 class="question">${renderTitle(q.title)}</h2>`;
+    const hint     = q.hint ? `<p class="hint">${escapeHtml(q.hint)}</p>` : '';
+
+    let body = '';
+    if (q.type === 'text') {
+      const val = state.answers[q.id] || '';
+      const inputType = q.inputType || 'text';
+      const autocap = q.autocapitalize || 'words';
+      const autocomp = q.id === 'email' ? 'email' : (q.id === 'telefone' ? 'tel' : 'off');
+      const inputMode = inputType === 'tel' ? 'tel' : (inputType === 'email' ? 'email' : 'text');
+      body = `
+        <div class="text-field">
+          <input type="${inputType}" id="input-${q.id}"
+            placeholder="${escapeHtml(q.placeholder || '')}"
+            value="${escapeHtml(val)}"
+            autocomplete="${autocomp}"
+            autocapitalize="${autocap}"
+            inputmode="${inputMode}"
+            spellcheck="false" />
+          <span class="caret"></span>
+        </div>
+      `;
+    } else if (q.type === 'options') {
+      const cls = q.layout === 'grid-2' ? 'options grid-2' : 'options';
+      const current = state.answers[q.id];
+      body = `<div class="${cls}">` + q.options.map((o, idx) => {
+        const sel = current === o.value ? ' selected' : '';
+        const keyLabel = String(idx + 1);
+        if (q.layout === 'grid-2') {
+          return `<button class="option${sel}" data-value="${escapeHtml(o.value)}">
+            <span class="label">${escapeHtml(o.label)}</span>
+            ${o.sub ? `<span class="sub">${escapeHtml(o.sub)}</span>` : ''}
+          </button>`;
+        }
+        return `<button class="option${sel}" data-value="${escapeHtml(o.value)}">
+          <span>${escapeHtml(o.label)}</span>
+          <span class="key">${keyLabel}</span>
+        </button>`;
+      }).join('') + `</div>`;
+    }
+
+    el.innerHTML = eyebrow + title + hint + body;
+    return el;
+  }
+
+  const ENTER_KEYFRAMES_RIGHT = [
+    { opacity: 0, transform: 'translateX(24px)' },
+    { opacity: 1, transform: 'translateX(0)' },
+  ];
+  const ENTER_KEYFRAMES_LEFT = [
+    { opacity: 0, transform: 'translateX(-24px)' },
+    { opacity: 1, transform: 'translateX(0)' },
+  ];
+  const LEAVE_KEYFRAMES_LEFT = [
+    { opacity: 1, transform: 'translateX(0)' },
+    { opacity: 0, transform: 'translateX(-24px)' },
+  ];
+  const LEAVE_KEYFRAMES_RIGHT = [
+    { opacity: 1, transform: 'translateX(0)' },
+    { opacity: 0, transform: 'translateX(24px)' },
+  ];
+  const ANIM_OPTS = { duration: 520, easing: 'cubic-bezier(0.22, 0.61, 0.36, 1)', fill: 'forwards' };
+
+  function mountStep(i, direction = 'forward') {
+    const enterFrames = direction === 'back' ? ENTER_KEYFRAMES_LEFT : ENTER_KEYFRAMES_RIGHT;
+    const leaveFrames = direction === 'back' ? LEAVE_KEYFRAMES_RIGHT : LEAVE_KEYFRAMES_LEFT;
+
+    // leave previous
+    const existing = stage.querySelectorAll('.step');
+    existing.forEach(e => {
+      e.classList.add('leaving');
+      const a = e.animate(leaveFrames, ANIM_OPTS);
+      a.onfinish = () => e.remove();
+    });
+
+    const el = renderStep(i);
+    stage.appendChild(el);
+    el.animate(enterFrames, ANIM_OPTS);
+
+    // wire inputs
+    const q = QUESTIONS[i];
+    if (q.type === 'text') {
+      const input = el.querySelector('input');
+      setTimeout(() => {
+        input.focus();
+      }, 520);
+      input.addEventListener('input', () => {
+        state.answers[q.id] = input.value.trim();
+        updateNext();
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && canProceed()) {
+          e.preventDefault();
+          goNext();
+        }
+      });
+    } else if (q.type === 'options') {
+      el.querySelectorAll('.option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          el.querySelectorAll('.option').forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+          state.answers[q.id] = btn.dataset.value;
+          updateNext();
+          // auto-advance (slight delay for feedback)
+          setTimeout(() => goNext(), 360);
+        });
+      });
+    }
+
+    updateChrome();
+    updateNext();
+  }
+
+  function updateChrome() {
+    stepCurrent.textContent = String(state.idx + 1).padStart(2, '0');
+    const pct = ((state.idx + 1) / QUESTIONS.length) * 100;
+    progressBar.style.width = pct + '%';
+    btnBack.classList.toggle('hidden', state.idx === 0);
+    btnNextLabel.textContent = (state.idx === QUESTIONS.length - 1) ? 'Revisar' : 'Continuar';
+  }
+
+  function canProceed() {
+    const q = QUESTIONS[state.idx];
+    const v = state.answers[q.id];
+    if (typeof v !== 'string') return Boolean(v);
+    if (!v.trim()) return false;
+    if (typeof q.validate === 'function') return q.validate(v);
+    return true;
+  }
+
+  function updateNext() {
+    btnNext.disabled = !canProceed();
+  }
+
+  function goNext() {
+    if (!canProceed()) return;
+    // track step completion
+    const q = QUESTIONS[state.idx];
+    if (window.MetaTracking) {
+      window.MetaTracking.trackEvent('QuizStep', {}, {
+        step: state.idx + 1,
+        step_id: q.id,
+        step_label: q.summaryLabel,
+        total_steps: QUESTIONS.length,
+      });
+    }
+    if (state.idx < QUESTIONS.length - 1) {
+      state.idx++;
+      mountStep(state.idx);
+    } else {
+      showFinal();
+    }
+  }
+
+  function goBack() {
+    if (state.idx === 0) return;
+    state.idx--;
+    mountStep(state.idx, 'back');
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  INTRO → QUIZ → FINAL
+  // ════════════════════════════════════════════════════════════
+  function startQuiz() {
+    document.getElementById('intro-view').style.display = 'none';
+    document.getElementById('quiz-view').style.display = 'flex';
+    state.idx = 0;
+    mountStep(0);
+    // Meta: ViewContent — usuário demonstrou interesse qualificado
+    if (window.MetaTracking) {
+      window.MetaTracking.trackEvent('ViewContent', {}, {
+        content_name: 'Quiz Paisagismo',
+        content_type: 'quiz',
+      });
+    }
+  }
+
+  // Monta user_data normalizado a partir das respostas, para o tracking
+  function buildUserData() {
+    const a = state.answers;
+    const fullName = (a.nome || '').trim();
+    const parts = fullName.split(/\s+/);
+    const fn = parts[0] || '';
+    const ln = parts.length > 1 ? parts.slice(1).join(' ') : '';
+    const cityState = (a.cidade || '').split(',');
+    const ct = (cityState[0] || '').trim();
+    const st = (cityState[1] || '').trim();
+    const phDigits = (a.telefone || '').replace(/\D/g, '');
+    // Garante DDI 55 para BR se faltar
+    const ph = phDigits.length >= 12 ? phDigits : (phDigits ? '55' + phDigits : '');
+    return {
+      em: a.email || '',
+      ph: ph,
+      fn: fn,
+      ln: ln,
+      ct: ct,
+      st: st,
+      country: 'br',
+    };
+  }
+
+  function showFinal() {
+    document.getElementById('quiz-view').style.display = 'none';
+    const finalView = document.getElementById('final-view');
+    finalView.style.display = 'flex';
+
+    // Title
+    const firstName = (state.answers.nome || '').split(' ')[0] || 'tudo certo';
+    document.getElementById('final-name').textContent = firstName;
+
+    // track quiz completion
+    if (window.MetaTracking) {
+      window.MetaTracking.trackEvent('QuizComplete', buildUserData(), {
+        content_name: 'Quiz Paisagismo',
+        content_category: state.answers.tipo || '',
+      });
+    }
+
+    // Summary
+    const summary = document.getElementById('summary');
+    summary.innerHTML = QUESTIONS.map(q => `
+      <div class="summary-row">
+        <span class="k">${escapeHtml(q.summaryLabel)}</span>
+        <span class="v">${escapeHtml(state.answers[q.id] || '—')}</span>
+      </div>
+    `).join('');
+  }
+
+  function restartQuiz() {
+    state.idx = 0;
+    state.answers = {};
+    document.getElementById('final-view').style.display = 'none';
+    document.getElementById('quiz-view').style.display = 'none';
+    document.getElementById('intro-view').style.display = 'flex';
+    stage.innerHTML = '';
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  WHATSAPP
+  // ════════════════════════════════════════════════════════════
+  async function sendToWhatsApp() {
+    const a = state.answers;
+    const message = `Olá, Neto! Meu nome é ${a.nome || ''}.
+
+Tenho interesse em um projeto de paisagismo com as seguintes informações:
+
+- Tipo: ${a.tipo || ''}
+- Projeto arquitetônico: ${a.arquitetonico || ''}
+- Metragem: ${a.metragem || ''}
+- Estilo desejado: ${a.estilo || ''}
+- Investimento previsto: ${a.investimento || ''}
+- Prazo para início: ${a.prazo || ''}
+- Cidade: ${a.cidade || ''}
+
+Gostaria de conversar sobre o meu projeto!`;
+
+    // Meta: Lead — principal evento de conversão. Disparar ANTES do redirect.
+    if (window.MetaTracking) {
+      try {
+        await window.MetaTracking.trackEvent('Lead', buildUserData(), {
+          content_name: 'WhatsApp Lead',
+          content_category: a.tipo || '',
+          lead_type: a.tipo || '',
+          project_style: a.estilo || '',
+          budget_range: a.investimento || '',
+          timeline: a.prazo || '',
+          city: a.cidade || '',
+          // value/currency opcional — deixa vazio porque lead não tem valor fixo
+        });
+      } catch (e) { console.warn('[Meta] Lead tracking failed, proceeding:', e); }
+    }
+
+    const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+  }
+
+  // expose
+  window.startQuiz = startQuiz;
+  window.goNext = goNext;
+  window.goBack = goBack;
+  window.sendToWhatsApp = sendToWhatsApp;
+  window.restartQuiz = restartQuiz;
+</script>
+
+<!-- ——— Consent banner LGPD ——— -->
+<div class="consent-banner" id="consent-banner" role="dialog" aria-label="Consentimento de cookies">
+  <p class="consent-text">
+    Usamos cookies e pixels para medir a eficácia dos anúncios e melhorar sua experiência. Seus dados são tratados conforme a LGPD.
+    <a href="/politica-privacidade" target="_blank" rel="noopener">Política de Privacidade</a>.
+  </p>
+  <div class="consent-actions">
+    <button class="consent-btn secondary" onclick="window.MetaTracking.setConsent(false); document.getElementById('consent-banner').classList.remove('show');">Recusar</button>
+    <button class="consent-btn primary" onclick="window.MetaTracking.setConsent(true); document.getElementById('consent-banner').classList.remove('show');">Aceitar</button>
+  </div>
+</div>
+
+<!-- Fallback noscript para o Pixel -->
+<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id={{INSIRA_SEU_PIXEL_ID}}&ev=PageView&noscript=1" alt=""/></noscript>
+
+</body>
+</html>
